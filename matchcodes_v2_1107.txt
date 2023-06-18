@@ -1,0 +1,144 @@
+/* -------------------------------------------------------------------- */
+/* new codes for PATENT MERGE, using updated data (assignee_1107, location_1107, patent_1107, from USPTO website, address attached)*/
+/* LAST UPDATED AT: 2022/11/07 By Lingyun QU */
+/* -------------------------------------------------------------------- */
+
+/* -------------------------------------------------------------------- */
+/* DATA SOURCE */
+/* https://patentsview.org/download/data-download-tables */
+/* assignee_1107 */
+/* https://s3.amazonaws.com/data.patentsview.org/download/g_assignee_disambiguated.tsv.zip */
+/* location_1107 */
+/* https://s3.amazonaws.com/data.patentsview.org/download/g_location_disambiguated.tsv.zip */
+/* patent_1107 */
+/* https://s3.amazonaws.com/data.patentsview.org/download/g_patent.tsv.zip */
+
+/* -------------------------------------------------------------------- */
+
+/* -------------------------------------------------------------------- */
+/* ---------------------------LOAD DATA---------------------------- */
+proc sql noprint;
+   create table main as
+      select * from TMP1.patent_all_up_to_2022Jun21;
+quit;
+
+/* location */
+proc import datafile="...\location_1107.tsv" 
+	out=location 
+	dbms=tab replace;
+run;
+/* location_id, county, disambig_country,  disambig_state, disambig_city, country */
+
+/* assignee information */
+proc import datafile="...\assignee_1107.tsv" 
+	out=assignee 
+	dbms=tab replace;
+run;
+/* assignee_id  the same as disamb_assignee_id_20220630 in the file g_persistent_assignee */
+/* patent_id, assignee_id, disambig_assignee_organization, location_id */
+
+/* patent information */
+proc import datafile="...\patent_1107.tsv" 
+	out=patent 
+	dbms=tab replace;
+run;
+/* patent_id, patent_type, patent_date, patent_title, patent_abstract, ...*/
+/* -------------------------------------------------------------------- */
+
+/* -------------------------------------------------------------------- */
+/* -------------------------DROP DUPS------------------------------*/
+/* Desctiptive Statistics */
+/* proc freq data=freq; */
+/* run; */
+/* patent_id=10000000 has 5 observations, with different subgroup_id: G01S7/4863,G01S7/4865,G01S17/894,G01S7/4914, G01S7/4917, and were hence made into different observations .*/
+/* The patent_id goes from 10,000,000 to 10,000,011 and directly goes to 10,000,014. The data itself has missing values. */
+
+/* divide the data to the duplication part and the distinct part */
+proc sort data=main  dupout=patent_all_dups nodupkey;
+      by patent_id;
+run;
+/* NOTE: from dataset WORK.PATENT_ALL read 46,001,881 observations */
+/* NOTE: 38,773,203 observations with same key are deleted*/
+/* NOTE: dataset WORK.PATENT_ALL_DUP has 38,773,203 observations and 8 variables */
+/* NOTE: dataset WORK.PATENT_ALL has 7,228,678 observations and 8 variables */
+/* -------------------------------------------------------------------- */
+
+
+/* -------------------------------------------------------------------- */
+/* --------MERGE and  KEEP ASSIGNEE ID NON-MISSING---------*/
+/* step 1: merge assignee id to main data*/
+proc sql;
+create table merge1 as 
+	select main.*, assignee.assignee_id
+	from main
+	left join assignee 
+	on main.patent_id=assignee.patent_id;
+quit;
+/* 7,471,111 rows */
+
+/* select obs without assignee_id*/
+/*data main_missing_assignee;*/
+/*set merge1;*/
+/*	if assignee_id="";*/
+/*run;*/
+/*NOTE: WORK.PATENT_MISSING_ASSIGNEE has 719,662 observations and 11 variables. */
+
+/* non-missing */
+data main_assignee_nomissing;
+set merge1;
+	if assignee_id="" then delete;
+run;
+/* NOTE: Dataset WORK.MAIN_ASSIGNEE_NOMISSING has 6,751,449 observations */
+
+/*why missing?*/
+/* because of dates? */
+/*proc sql;*/
+/*create table main_missing as*/
+/*select main_missing_assignee.patent_id, patent.patent_date from main_missing_assignee left join patent on main_missing_assignee.patent_id=patent.patent_id;*/
+/*quit;*/
+/**/
+/*proc freq data = patent_missing;*/
+/*run;*/
+/* 1984-10-12, 2021-10-19, 2021-11-02, ..., 2021-12-28 */
+/* all TUESDAY are missing */
+
+/* step 2: merge assignee information */
+proc sql;
+create table merge_assignee as 
+	select main_assignee_nomissing.*, assignee.location_id
+	from main_assignee_nomissing
+	left join assignee 
+	on main_assignee_nomissing.patent_id=assignee.assignee_id;
+quit;
+/*6,751,149 obs produced*/
+
+/* step 3: merge location data to step 2*/
+proc sql;
+create table merge_location as 
+	select merge_assignee.*, location.*
+	from merge_assignee
+	left join location
+	on merge_assignee.location_id=location.location_id;
+quit;
+/*6,751,149 obs produced*/
+
+
+/* step 4: merge patent data to step 1 */
+proc sql;
+create table merge_patent as 
+	select merge_location.*, patent.* 
+	from merge_location 
+	left join patent 
+	on merge_location.patent_id=patent.patent_id;
+quit;
+/*6,751,149 obs produced*/
+
+/*check coverage*/
+/*proc sql;*/
+/*options missing = ' ';*/
+/*data final;*/
+/*   set gg;*/
+/*   if missing(cats(assignee_id)) or missing(cats(patent_id)) or missing(location_id) then delete;*/
+/*run;*/
+/*6,751,149 lines*/
+/* no line is missing patent id, assignee id or location id */
